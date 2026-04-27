@@ -1,0 +1,69 @@
+{
+  "name": "@enconvert/mcp",
+  "publishConfig": {
+      "access": "public"
+    },
+  "version": "0.0.1",
+  "description": "MCP server for the Enconvert file conversion API — convert URLs to PDF, screenshot, or markdown, and convert document and image files, directly from Claude Code, Cursor, Windsurf, and Claude Desktop.",
+  "license": "MIT",
+  "author": "Enconvert <support@enconvert.com>",
+  "homepage": "https://enconvert.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enconvert/enconvert-mcp.git"
+  },
+  "type": "module",
+  "bin": {
+    "enconvert-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "enconvert",
+    "pdf",
+    "screenshot",
+    "markdown",
+    "url-to-pdf",
+    "url-to-screenshot",
+    "url-to-markdown",
+    "html-to-pdf",
+    "docx-to-pdf",
+    "heic-to-webp",
+    "conversion",
+    "claude-code",
+    "cursor",
+    "windsurf",
+    "claude-desktop",
+    "ai",
+    "agent",
+    "llm"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@enconvert/node-sdk": "^0.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "publint": "^0.3.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/index.ts",
+    "test:smoke": "node --test tests/smoke.test.ts",
+    "lint:pkg": "publint",
+    "prepublishOnly": "npm run build && npm run typecheck && npm run lint:pkg"
+  }
+}
