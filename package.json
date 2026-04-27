@@ -3,14 +3,14 @@
   "publishConfig": {
       "access": "public"
     },
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "MCP server for the Enconvert file conversion API — convert URLs to PDF, screenshot, or markdown, and convert document and image files, directly from Claude Code, Cursor, Windsurf, and Claude Desktop.",
   "license": "MIT",
   "author": "Enconvert <support@enconvert.com>",
   "homepage": "https://enconvert.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/enconvert/enconvert-mcp.git"
+    "url": "git+https://github.com/conversionapi/mcp.git"
   },
   "type": "module",
   "bin": {
