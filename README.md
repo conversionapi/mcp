@@ -140,8 +140,6 @@ Pass an **absolute** path (e.g., `/Users/me/file.docx` or `C:\Users\me\file.docx
 
 This MCP server is a thin wrapper around [`@enconvert/node-sdk`](https://www.npmjs.com/package/@enconvert/node-sdk), which owns all HTTP, authentication, timeout, retry, and `job_id` polling-on-500 logic. New SDK releases automatically benefit the MCP server.
 
-When publishing a new version of the MCP, just run `npm publish --access public` — the SDK is now a normal published dep, no local-link dance required.
-
 ## License
 
 [MIT](./LICENSE)
