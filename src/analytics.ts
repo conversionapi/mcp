@@ -25,7 +25,7 @@
  * alone.
  */
 
-import { instrument } from "@posthog/mcp";
+import { instrument, type BeforeSendFn } from "@posthog/mcp";
 import { PostHog } from "posthog-node";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -130,7 +130,13 @@ function redactDeep(value: unknown, keyHint?: string): unknown {
   return value;
 }
 
-type PostHogEvent = Record<string, unknown>;
+/**
+ * The SDK's capture-event shape, derived from the exported BeforeSendFn
+ * rather than deep-imported: PostHogCaptureEvent itself is not re-exported
+ * from the package root, and Parameters<> keeps us aligned with the pinned
+ * SDK's exact signature if it changes shape in an upgrade.
+ */
+type PostHogEvent = Parameters<BeforeSendFn>[0];
 
 function redactToolEvent(event: PostHogEvent | null | undefined): PostHogEvent | null | undefined {
   if (!event) return event;
@@ -179,6 +185,6 @@ export function instrumentServer(server: McpServer, env: Env, serverVersion: str
       return { distinctId, groups: id ? { project: id } : undefined };
     },
     eventProperties: async () => ({ key_type: type, mcp_server_version: serverVersion }),
-    beforeSend: (event: PostHogEvent | null | undefined) => redactToolEvent(event),
+    beforeSend: redactToolEvent,
   });
 }
