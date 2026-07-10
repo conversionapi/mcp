@@ -2,60 +2,45 @@
  * Tool titles and descriptions optimized for reliable LLM tool selection.
  *
  * Each description follows a four-part structure:
- *   1. One-line action — what the tool does.
+ *   1. One-line action — what the tool does, stated as INPUT -> OUTPUT.
  *   2. Use when — concrete user-intent phrases that should trigger this tool.
  *   3. Do NOT use when — explicit disambiguation against sibling tools.
- *   4. Returns — the output shape.
+ *   4. Returns — the output shape plus operational notes.
+ *
+ * Only the FILE conversion tools live here; every URL/browser tool is V2
+ * (see descriptions-v2.ts — perceive_url and friends).
  *
  * Keeping these as exported constants (rather than inline strings) lets us
  * snapshot-test them and tune wording without touching handler logic.
  */
 
-export const URL_TO_PDF_TITLE = "Convert URL to PDF";
-export const URL_TO_PDF_DESCRIPTION = `Render a live web page at the given URL as a PDF document and return a download URL.
-
-Use when: the user wants to save a webpage as PDF, archive an article, export a receipt or invoice, generate a print-ready file from a URL, or preserve a page's exact visual layout.
-
-Do NOT use when: converting a local .html file on disk (use convert_document); the user only wants to read, summarize, or quote the text (use convert_url_to_markdown — far cheaper on tokens); the user wants an image snapshot (use convert_url_to_screenshot).
-
-Returns a presigned PDF download URL and metadata (filename, file size, conversion time). Optionally saves the PDF to a local path.`;
-
-export const URL_TO_SCREENSHOT_TITLE = "Capture URL Screenshot";
-export const URL_TO_SCREENSHOT_DESCRIPTION = `Capture a full-page PNG screenshot of a live web page.
-
-Use when: the user asks for a screenshot, visual preview, page image, bug or layout snapshot, or social-share preview of a website.
-
-Do NOT use when: the user wants the page's text content (use convert_url_to_markdown); the user wants a paginated printable document (use convert_url_to_pdf); the input is a local image file needing format conversion (use convert_image).
-
-Returns a presigned PNG download URL and metadata.`;
-
-export const URL_TO_MARKDOWN_TITLE = "Extract URL as Markdown";
-export const URL_TO_MARKDOWN_DESCRIPTION = `Extract the main article content of a web page as clean GitHub-Flavored Markdown with a YAML frontmatter block (title, description, url, links, images). Strips navigation, footers, ads, scripts, and boilerplate.
-
-Use when: the user wants to read, summarize, quote, translate, or analyze the textual content of a page; ingest a page into an LLM context window, RAG index, or notes app; cite a source with clean text. This is the most token-efficient URL conversion — prefer it over convert_url_to_pdf or convert_url_to_screenshot whenever the user's goal involves the page's text rather than its visuals.
-
-Do NOT use when: the exact visual layout must be preserved (use convert_url_to_pdf); the user wants an image of the page (use convert_url_to_screenshot); the source is a local document file (use convert_document).
-
-Returns the extracted Markdown inline in the response (when under ~256 KB) plus a presigned .md download URL and metadata.`;
-
 export const CONVERT_DOCUMENT_TITLE = "Convert Document";
-export const CONVERT_DOCUMENT_DESCRIPTION = `Convert a document file between formats. Accepted input formats: .doc, .docx, .xls, .xlsx, .ppt, .pptx, .odt, .ods, .odp, .pages, .numbers, .epub, .html, .htm, .md, .csv, .json, .xml, .yaml, .yml, .toml. Output defaults to pdf.
+export const CONVERT_DOCUMENT_DESCRIPTION = `Convert a document FILE between formats. Input is an absolute local filesystem path OR an http(s) URL pointing at the file itself (the server downloads the bytes — it does NOT render web pages). Implemented pairs, exactly:
+- To PDF: doc/docx, xls/xlsx, ppt/pptx, odt, ods, odp, ots, pages, numbers, epub, html/htm, md/markdown.
+- markdown -> html.
+- Structured data: json <-> xml, json <-> yaml, json <-> toml, json <-> csv, csv <-> xml.
+No other pairs exist (no pdf -> docx, no yaml -> toml, no html -> markdown). Unsupported pairs fail instantly with the list of valid outputs for that input. output_format defaults to "pdf".
 
-The file input is either an absolute local filesystem path OR an http(s) URL. With an http(s) URL, this server fetches the bytes and uploads them. Local paths are resolved on the machine running this MCP server.
+Use when: "convert this file to PDF" for Word, Excel, PowerPoint, OpenDocument, Apple Pages/Numbers, or EPUB files; turning a local .html or .md file into a PDF; markdown to HTML; JSON/CSV/XML/YAML/TOML data-format conversions.
 
-Use when: the user wants to convert Word, Excel, PowerPoint, Keynote, Pages, Numbers, OpenDocument, or EPUB files to PDF; turn a local .html file into PDF; convert between structured-text formats (JSON↔YAML, CSV↔JSON, etc.).
+Do NOT use when: the source is a LIVE web page to render or read (use perceive_url — it produces markdown, PDF, screenshots, and structured data from URLs); the file is an image or the output should be an image (use convert_image — including pdf -> jpeg).
 
-Do NOT use when: the source is a live web page (use convert_url_to_pdf or convert_url_to_markdown); the source is an image file (use convert_image).
-
-Returns a presigned download URL of the converted file and metadata. Accepts optional PDF rendering options (page size, orientation, margins, scale, grayscale).`;
+Returns: a presigned download URL of the converted file plus metadata and a jobId; pass save_to (absolute path) to also write it locally. pdf_options (page size, orientation, margins, scale, grayscale) shape PDF outputs.`;
 
 export const CONVERT_IMAGE_TITLE = "Convert Image";
-export const CONVERT_IMAGE_DESCRIPTION = `Convert an image file between formats. Supported formats: jpeg, png, svg, heic, webp.
+export const CONVERT_IMAGE_DESCRIPTION = `Convert an image FILE between formats: any pair among jpeg, png, svg, heic, webp (all 20 combinations), plus pdf -> jpeg rasterization. Input is an absolute local filesystem path OR an http(s) URL pointing at the file itself. A multi-page PDF returns a ZIP containing one JPEG per page; a single-page PDF returns one JPEG.
 
-The file input is either an absolute local filesystem path OR an http(s) URL. The target output_format is required.
+Use when: converting iPhone HEIC photos to WebP/PNG/JPEG, re-encoding or modernizing images to WebP, rasterizing an SVG, turning PDF pages into JPEG images, batch-converting image assets.
 
-Use when: the user wants to convert iPhone HEIC photos to WebP, PNG, or JPEG; re-encode for compression; modernize PNG or JPEG to WebP; rasterize SVG; or batch-convert image assets.
+Do NOT use when: the file is a document format (use convert_document); the source is a LIVE web page (use perceive_url with outputs ['screenshot']); resizing, cropping, or editing is wanted (not supported — format conversion only); PDF as OUTPUT is wanted (pdf is input-only here; images cannot be converted to PDF).
 
-Do NOT use when: the source is a document (use convert_document); the source is a live web page (use convert_url_to_screenshot); the user wants to resize, crop, or edit the image (not supported here — only format conversion).
+Returns: a presigned download URL of the converted image plus metadata and a jobId; pass save_to (absolute path) to also write it locally. PDF input supports output_format "jpeg" only — other outputs fail instantly with a clear error.`;
 
-Returns a presigned download URL of the converted image and metadata.`;
+export const JOB_STATUS_TITLE = "Get Job Status";
+export const JOB_STATUS_DESCRIPTION = `Check the status of ONE file-conversion job by job_id (every successful convert_document / convert_image result includes a "Job ID" in its text and a jobId in structuredContent).
+
+Use when: a conversion timed out or the connection dropped mid-call and you need to recover its result; confirming whether a slow conversion actually finished server-side.
+
+Do NOT use when: tracking a perceive batch (use get_perceive_batch) or an ingest job (use get_ingest_job); no jobId is at hand.
+
+Returns: "processing" (poll again shortly), "success" with the presigned download URL and object key, or "failed" with the error message.`;

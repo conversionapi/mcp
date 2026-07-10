@@ -13,7 +13,16 @@ export default defineConfig({
   banner: {
     js: "#!/usr/bin/env node",
   },
-  external: ["@modelcontextprotocol/sdk", "@enconvert/node-sdk", "zod"],
+  external: [
+    "@modelcontextprotocol/sdk",
+    "@enconvert/node-sdk",
+    "zod",
+    "commander",
+    "@inquirer/prompts",
+    "picocolors",
+    "ora",
+    "smol-toml",
+  ],
   outExtension() {
     return { js: ".js" };
   },

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.enconvert/mcp",
+  "title": "Enconvert",
+  "description": "MCP server for the Enconvert file conversion API — convert URLs to PDF, screenshot, or markdown, and convert document and image files.",
+  "repository": {
+    "url": "https://github.com/conversionapi/mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://enconvert.com",
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@enconvert/mcp",
+      "version": "0.2.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

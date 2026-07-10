@@ -4,48 +4,87 @@ Official **Model Context Protocol (MCP) server** for [Enconvert](https://enconve
 
 ## What you get
 
-Five tools, optimized for reliable LLM tool selection:
+Twenty-one tools, optimized for reliable LLM tool selection. All URL/browser work goes through the V2 tools (`perceive_url` and friends); the V1 tools cover local/remote FILE conversion.
+
+### File conversion (3)
 
 | Tool | What it does |
 |------|-------------|
-| `convert_url_to_pdf` | Render any live web page as a PDF |
-| `convert_url_to_screenshot` | Capture a full-page PNG screenshot of any URL |
-| `convert_url_to_markdown` | Extract clean GFM Markdown (with YAML frontmatter metadata) from any article — returns the text inline, ideal for summarizing, RAG, or notes |
-| `convert_document` | Convert DOCX, XLSX, PPTX, ODT, Pages, Numbers, EPUB, HTML, MD, CSV, JSON, XML, YAML, TOML to PDF (or between each other) |
-| `convert_image` | Convert between JPEG, PNG, SVG, HEIC, WebP (handy for iPhone HEIC → WebP) |
+| `convert_document` | Convert DOC(X), XLS(X), PPT(X), ODT, ODS, ODP, OTS, Pages, Numbers, EPUB, HTML, MD, CSV, JSON, XML, YAML, TOML to PDF (or between each other) |
+| `convert_image` | Convert between JPEG, PNG, SVG, HEIC, WebP — plus PDF → JPEG rasterization (handy for iPhone HEIC → WebP) |
+| `get_job_status` | Check a single file-conversion job by its job ID |
+
+### V2 — web data for agents (18, private API key required, plan-gated)
+
+| Tool | What it does |
+|------|-------------|
+| `perceive_url` | Render a page into multiple artifacts at once (markdown, HTML, screenshots, PDF, links, images) + structured extraction, with ~1h caching |
+| `get_perceive_operation` | Re-fetch a perceive result with freshly signed artifact URLs |
+| `perceive_batch` | Perceive up to 1000 URLs with shared options (inline for small batches, async for large) |
+| `get_perceive_batch` | Poll a perceive batch by job ID |
+| `discover_urls` | Enumerate a site's URLs via sitemap/crawl/hybrid — no rendering, no render quota |
+| `web_search` | Google-backed search (web, news, images, scholar, patents, maps) with optional auto-perceive of top results |
+| `extract_structured` | Schema-driven data extraction (free CSS pass + LLM escalation) from up to 50 URLs or a discovered site |
+| `start_ingest` | Turn a site or URL list into RAG-ready chunked JSONL (always async) |
+| `list_ingest_jobs` / `get_ingest_job` / `cancel_ingest_job` | Manage ingest jobs |
+| `retry_ingest_webhook` | Re-deliver a completed job's HMAC-signed completion webhook |
+| `create_watcher` / `list_watchers` / `get_watcher` / `get_watcher_snapshots` / `update_watcher` / `delete_watcher` | Monitor pages for changes on an hourly-plus cadence with diff history and notifications |
+
+Not exposed by design: the webhook signing-secret endpoints (`GET/POST /v2/ingest/webhook-secret*`) — secrets do not belong in LLM context. Fetch those from the Enconvert dashboard.
 
 ## Requirements
 
 - **Node.js 18 or later**
 - An **Enconvert API key** — get one at [enconvert.com/dashboard/api-keys](https://enconvert.com/dashboard/api-keys)
 
-## Install
-
-Pick your client below. All recipes use `npx -y @enconvert/mcp@latest` — no local install needed.
-
-### Claude Code (macOS / Linux)
+## Install — one command
 
 ```bash
-claude mcp add enconvert -s user \
-  -e ENCONVERT_API_KEY=sk_live_your_key \
-  -- npx -y @enconvert/mcp@latest
+npx @enconvert/mcp setup
 ```
 
-### Claude Code (native Windows)
+That's it. The wizard:
 
-Native Windows requires wrapping `npx` in `cmd /c` — otherwise the command hangs.
+1. **Detects your AI tools** (Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Zed, Gemini CLI, Codex CLI, OpenCode) and lets you pick which get Enconvert — detected tools are preselected.
+2. **Asks for your secret API key once** (hidden input) and validates it live against the API — it even tells you if you pasted a *public* key by mistake.
+3. **Writes every config correctly**, including the `cmd /c npx` wrapper Windows needs. Your key is stored once in `~/.enconvert/config.json` (permissions `600`) — never copied into client configs.
 
-```powershell
-claude mcp add enconvert -s user `
-  -e ENCONVERT_API_KEY=sk_live_your_key `
-  -- cmd /c npx -y @enconvert/mcp@latest
+```
+$ npx @enconvert/mcp setup
+
+  Enconvert MCP - setup
+
+? Which AI tools should get Enconvert?
+  [x] Claude Code (detected)    [x] Cursor (detected)
+  [ ] Claude Desktop            [ ] Windsurf   ...
+? Paste your SECRET API key (sk_live_..., input hidden): ********
+  ✔ API key is valid.
+  + Claude Code - claude CLI (user scope)
+  + Cursor - ~/.cursor/mcp.json
+
+  Done. Restart your AI tools to pick up the server.
 ```
 
-> **Using WSL?** Use the macOS/Linux recipe instead — no `cmd /c` needed inside WSL.
+Restart your AI tools afterwards, and you're running.
 
-### Cursor
+### Manage it just as easily
 
-Edit `~/.cursor/mcp.json` (create it if missing):
+| Command | What it does |
+|---|---|
+| `npx @enconvert/mcp status` | Where it's installed + whether your key is valid (live check) |
+| `npx @enconvert/mcp rotate-key` | Swap in a new API key — one command, applies to every client |
+| `npx @enconvert/mcp remove` | Uninstall from selected tools (optionally delete the saved key) |
+| `npx @enconvert/mcp setup --yes` | Non-interactive: configure all detected tools with the saved key |
+
+Scripting? `setup --clients claude-code,cursor --api-key sk_live_... --yes` skips all prompts. `rotate-key` with no argument prompts with hidden input so the key never lands in your shell history.
+
+### Where the key lives
+
+`setup` stores your key **once** in `~/.enconvert/config.json` (mode `600`) instead of pasting it into every client's plaintext config. The server reads it at startup; the `ENCONVERT_API_KEY` environment variable always overrides it (for Docker, CI, or manual setups). Rotating is therefore a single-file change — every client picks it up on its next launch.
+
+## Advanced: manual configuration
+
+Prefer to wire it yourself? Add this to your client's MCP config (`~/.cursor/mcp.json`, `~/.codeium/windsurf/mcp_config.json`, etc.):
 
 ```json
 {
@@ -61,77 +100,61 @@ Edit `~/.cursor/mcp.json` (create it if missing):
 }
 ```
 
-**On native Windows** — replace the `command` and `args`:
+On **native Windows**, use `"command": "cmd"` and `"args": ["/c", "npx", "-y", "@enconvert/mcp@latest"]` — bare `npx` hangs. (WSL behaves like Linux.) For Claude Code:
 
-```json
-{
-  "mcpServers": {
-    "enconvert": {
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "@enconvert/mcp@latest"],
-      "env": {
-        "ENCONVERT_API_KEY": "sk_live_your_key"
-      }
-    }
-  }
-}
+```bash
+claude mcp add enconvert -s user \
+  -e ENCONVERT_API_KEY=sk_live_your_key \
+  -- npx -y @enconvert/mcp@latest
 ```
 
-Restart Cursor after editing.
-
-### Windsurf
-
-Edit `~/.codeium/windsurf/mcp_config.json` — same JSON shape as Cursor. On Windows, use the `cmd /c` variant above.
-
-### Claude Desktop
-
-Edit `claude_desktop_config.json`:
-
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-Same JSON shape as Cursor. Restart Claude Desktop after editing.
+The inline `env` block is optional if you've run `setup` (or created `~/.enconvert/config.json`) — the server falls back to the saved key automatically. Client config locations: Claude Desktop `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) / `%APPDATA%\Claude\claude_desktop_config.json` (Windows); Cursor `~/.cursor/mcp.json`; Windsurf `~/.codeium/windsurf/mcp_config.json`; Gemini CLI `~/.gemini/settings.json`; Codex `~/.codex/config.toml`.
 
 ## Try it
 
 Once installed, try any of these in a fresh prompt:
 
-1. *"Save https://en.wikipedia.org/wiki/PDF as a PDF."*
-2. *"Screenshot https://news.ycombinator.com for me."*
-3. *"Give me the article at https://en.wikipedia.org/wiki/Model_Context_Protocol as markdown so we can summarize it."*
-4. *"Convert `/Users/me/Desktop/report.docx` to PDF."*
-5. *"Convert `/Users/me/Desktop/iphone.heic` to webp."*
+1. *"Give me https://en.wikipedia.org/wiki/Model_Context_Protocol as markdown and summarize it."* → `perceive_url`
+2. *"Screenshot https://news.ycombinator.com and save the page as a PDF too."* → `perceive_url` (both artifacts in one call)
+3. *"Search for the three best static site generators and read their homepages."* → `web_search` with `perceive_top`
+4. *"Get every plan name and price from https://example.com/pricing."* → `extract_structured`
+5. *"Convert `/Users/me/Desktop/report.docx` to PDF."* → `convert_document`
+6. *"Convert `/Users/me/Desktop/iphone.heic` to webp."* → `convert_image`
+7. *"Watch https://example.com/changelog and tell me when it changes."* → `create_watcher`
 
-The agent picks the right tool automatically — descriptions are tuned so summarize-an-article hits `convert_url_to_markdown` (cheapest on tokens) rather than `convert_url_to_pdf`.
+The agent picks the right tool automatically — descriptions are tuned so URL work lands on `perceive_url` and file work on the convert tools.
 
 ## Configuration
 
-All configuration is via environment variables.
+The API key is resolved in this order:
 
-| Variable | Required | Default | Purpose |
+1. `ENCONVERT_API_KEY` environment variable (from your MCP client's `env` block) — always wins
+2. `~/.enconvert/config.json`, written by `npx @enconvert/mcp setup`
+
+| Setting | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `ENCONVERT_API_KEY` | ✅ Yes | — | Your Enconvert API key |
-| `ENCONVERT_BASE_URL` | No | `https://api.enconvert.com` | Override for staging or self-hosted Enconvert |
+| `ENCONVERT_API_KEY` (env) or `api_key` (config file) | ✅ Yes | — | Your **secret** Enconvert API key |
+| `ENCONVERT_BASE_URL` (env) or `base_url` (config file) | No | `https://api.enconvert.com` | Override for staging or self-hosted Enconvert |
 
 ## How it works
 
 The server is a thin MCP wrapper around the official [`@enconvert/node-sdk`](https://www.npmjs.com/package/@enconvert/node-sdk) — which owns all HTTP, auth, timeout (5 min), and job-polling fallback logic. Each tool handler maps MCP input to an SDK call and returns a consistent response:
 
-- a **text summary** with the presigned download URL and metadata
-- a **`structuredContent`** block with typed fields (`presignedUrl`, `objectKey`, `filename`, `fileSize`, `conversionTimeSeconds`, `savedTo?`)
-- a **`resource_link`** to the local file when `save_to` is provided
-- for `convert_url_to_markdown`, the **extracted Markdown inlined** in the response (up to ~256 KB) so agents can immediately read it without a second HTTP fetch
+- a **text summary** with the download URL(s) and metadata
+- a **`structuredContent`** block with the full typed result
+- a **`resource_link`** to the local file when `save_to` is provided (file tools)
+- for `perceive_url`, the **markdown artifact inlined** in the response (up to ~256 KB) so agents can immediately read it without a second HTTP fetch
 
 ## Troubleshooting
 
 **`npx` hangs on native Windows**
-Use `cmd /c npx …` — the `cmd` shim handles Windows path resolution that bare `npx` does not.
+Use `cmd /c npx …` — the `cmd` shim handles Windows path resolution that bare `npx` does not. (`npx @enconvert/mcp setup` writes this automatically on Windows.)
 
 **`Authentication failed: Invalid or missing API key`**
-Double-check `ENCONVERT_API_KEY` is set in the MCP client's env block, not just your shell. MCP servers launched by Claude Code / Cursor / Windsurf only see the env vars you pass via `-e` or the config file.
+Run `npx @enconvert/mcp status` — it shows where your key comes from and validates it live. Fix with `npx @enconvert/mcp rotate-key`, or check the `ENCONVERT_API_KEY` env block if you configured manually.
 
 **Tool call times out**
-Some conversions (Playwright-rendered URL → PDF of a heavy page) can take 15–30 s, and the SDK waits up to 5 min. If your client has a shorter timeout, raise it.
+Browser renders of heavy pages (`perceive_url`, `extract_structured`) can take 15–30 s, and the SDK waits up to 5 min. If your client has a shorter timeout, raise it.
 
 **"Relative path" error on `convert_document` / `convert_image`**
 Pass an **absolute** path (e.g., `/Users/me/file.docx` or `C:\Users\me\file.docx`), or pass an `http(s)://` URL. MCP servers have no reliable working directory.

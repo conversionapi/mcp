@@ -1,9 +1,10 @@
 {
   "name": "@enconvert/mcp",
+  "mcpName": "com.enconvert/mcp",
   "publishConfig": {
-      "access": "public"
-    },
-  "version": "0.0.3",
+    "access": "public"
+  },
+  "version": "0.2.0",
   "description": "MCP server for the Enconvert file conversion API — convert URLs to PDF, screenshot, or markdown, and convert document and image files, directly from Claude Code, Cursor, Windsurf, and Claude Desktop.",
   "license": "MIT",
   "author": "Enconvert <support@enconvert.com>",
@@ -22,7 +23,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": "^20.20.0 || >=22.22.0"
   },
   "keywords": [
     "mcp",
@@ -47,8 +48,15 @@
     "llm"
   ],
   "dependencies": {
+    "@enconvert/node-sdk": "^0.1.0",
+    "@inquirer/prompts": "^8.5.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@enconvert/node-sdk": "^0.0.1",
+    "@posthog/mcp": "0.8.0",
+    "commander": "^15.0.0",
+    "ora": "^9.4.1",
+    "picocolors": "^1.1.1",
+    "posthog-node": "^5.39.4",
+    "smol-toml": "^1.7.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -1,0 +1,101 @@
+# Publish @enconvert/mcp to npm (with signed Sigstore provenance) AND to the
+# official MCP Registry — on every version tag.
+#
+# AUTH MODEL (two different mechanisms — read this):
+#   * npm publish  → TOKENLESS via npm Trusted Publishing (GitHub OIDC). No npm
+#                    token secret. This is what generates provenance.
+#   * MCP Registry → DNS-domain auth for the "com.enconvert/mcp" namespace. The
+#                    domain namespace CANNOT use OIDC, so the registry step signs
+#                    with an Ed25519 key stored as the repo secret MCP_DNS_KEY.
+#
+# ── One-time setup this workflow DEPENDS ON (see the runbook) ─────────────────
+#   1. npmjs.com → package @enconvert/mcp → Settings → Trusted Publisher:
+#        provider = GitHub Actions, org/user = conversionapi, repo = mcp,
+#        workflow filename = publish.yml, environment = (blank).
+#   2. github.com/conversionapi/mcp must be a PUBLIC repo — npm only generates
+#        provenance for a public repo + public package.
+#   3. package.json has "mcpName": "com.enconvert/mcp" and server.json exists
+#        (both committed, "name": "com.enconvert/mcp"). The registry validates
+#        the npm package's mcpName against server.json "name" at publish time.
+#   4. DNS: a TXT record on the APEX of enconvert.com (NOT a subdomain):
+#        v=MCPv1; k=ed25519; p=<base64-public-key>
+#      This record must STAY in place — the registry re-checks it on every
+#      publish. Only remove/replace it when you rotate the key.
+#   5. GitHub repo secret MCP_DNS_KEY = the Ed25519 PRIVATE key as 64-char hex
+#        (Settings → Secrets and variables → Actions → New repository secret).
+#
+# ── Version pins ─────────────────────────────────────────────────────────────
+#   npm Trusted Publishing requires npm >= 11.5.1 and Node >= 22.14.0. Node 22
+#   ships npm 10.x, so we upgrade npm before publishing. The package still
+#   targets its engines.node range for CONSUMERS — only the publish RUNNER needs
+#   Node 22. Provenance requires a cloud runner (ubuntu-latest); self-hosted is
+#   unsupported.
+#
+# Consider pinning the third-party actions below to full commit SHAs for
+# supply-chain hardening once you're happy with the flow.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"          # cut a release with:  git tag v0.2.0 && git push origin v0.2.0
+
+permissions:
+  contents: read          # least privilege
+  id-token: write         # REQUIRED for npm Trusted Publishing / provenance (npm step only)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"                          # >= 22.14.0 for trusted publishing
+          registry-url: "https://registry.npmjs.org"  # writes ~/.npmrc so publish targets npm
+
+      - name: Upgrade npm (trusted publishing needs >= 11.5.1; Node 22 ships npm 10.x)
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (tsup → ./dist)
+        run: npm run build
+
+      - name: Verify the tag matches package.json AND server.json versions
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          SRV="$(node -p "require('./server.json').version")"
+          echo "tag=$TAG  package.json=$PKG  server.json=$SRV"
+          test "$TAG" = "$PKG" || { echo "::error::tag $TAG != package.json $PKG"; exit 1; }
+          test "$TAG" = "$SRV" || { echo "::error::tag $TAG != server.json $SRV"; exit 1; }
+
+      # ── npm publish with provenance (tokenless via Trusted Publishing) ──────
+      # Under Trusted Publishing provenance is automatic; the explicit
+      # --provenance flag is a harmless, idempotent guarantee that
+      # dist.attestations gets written (which the site's freshness feed reads).
+      - name: Publish to npm with provenance
+        run: npm publish --provenance --access public
+
+      # ── Publish server.json to the official MCP Registry (DNS-domain auth) ──
+      # Runs AFTER npm publish because the registry validates server.json
+      # against the live npm package's mcpName. Domain namespace = key-based
+      # auth (no OIDC): sign with the Ed25519 key stored in MCP_DNS_KEY.
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version || true
+
+      - name: Publish to MCP Registry
+        env:
+          MCP_DNS_KEY: ${{ secrets.MCP_DNS_KEY }}
+        run: |
+          ./mcp-publisher login dns --domain=enconvert.com --private-key="$MCP_DNS_KEY"
+          ./mcp-publisher publish

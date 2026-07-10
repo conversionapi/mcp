@@ -1,11 +1,16 @@
 /**
- * MCP server construction: one McpServer, five registered tools.
+ * MCP server construction.
  *
- * Tools wrap the `@enconvert/node-sdk` client (which owns all HTTP, auth, timeout,
- * and job_id polling-on-500 logic). Each handler maps MCP snake_case input
- * to SDK camelCase options, invokes the SDK, and returns a consistent
- * tri-modal response: text summary + structuredContent + optional
- * resource_link when the output was saved locally.
+ * V1 tools cover FILE conversions only (convert_document, convert_image,
+ * get_job_status), wrapping the `@enconvert/node-sdk` client (which owns
+ * all HTTP, auth, timeout, and job_id polling-on-500 logic). Browser-based
+ * URL work (render, screenshot, markdown, whole-site) lives exclusively in
+ * the V2 tool set — see v2-tools.ts (perceive_url and friends).
+ *
+ * Each handler maps MCP snake_case input to SDK camelCase options, invokes
+ * the SDK, and returns a consistent tri-modal response: text summary +
+ * structuredContent + optional resource_link when the output was saved
+ * locally.
  */
 
 import { basename, isAbsolute } from "node:path";
@@ -13,31 +18,32 @@ import { basename, isAbsolute } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
-  APIError,
-  AuthenticationError,
   Enconvert,
-  RateLimitError,
   type ConversionResult,
   type FileInput,
-  type PdfOptions,
+  type JobStatus,
 } from "@enconvert/node-sdk";
 import { z } from "zod";
+
+import {
+  errorResult,
+  pdfOptionsSchema,
+  toPdfOptions,
+  type ContentBlock,
+} from "./shared.js";
+import { instrumentServer } from "./analytics.js";
+import { registerV2Tools } from "./v2-tools.js";
 
 import {
   CONVERT_DOCUMENT_DESCRIPTION,
   CONVERT_DOCUMENT_TITLE,
   CONVERT_IMAGE_DESCRIPTION,
   CONVERT_IMAGE_TITLE,
-  URL_TO_MARKDOWN_DESCRIPTION,
-  URL_TO_MARKDOWN_TITLE,
-  URL_TO_PDF_DESCRIPTION,
-  URL_TO_PDF_TITLE,
-  URL_TO_SCREENSHOT_DESCRIPTION,
-  URL_TO_SCREENSHOT_TITLE,
+  JOB_STATUS_DESCRIPTION,
+  JOB_STATUS_TITLE,
 } from "./descriptions.js";
 
-const SERVER_VERSION = "0.1.0";
-const INLINE_MARKDOWN_MAX_BYTES = 256 * 1024;
+const SERVER_VERSION = "0.2.0";
 
 export interface Env {
   apiKey: string;
@@ -47,129 +53,6 @@ export interface Env {
 // --------------------------------------------------------------------------
 // Schemas — every field has .describe() so the LLM sees its purpose.
 // --------------------------------------------------------------------------
-
-const pdfOptionsSchema = z
-  .object({
-    page_size: z
-      .string()
-      .optional()
-      .describe("Page size preset, e.g. 'A4', 'Letter', 'Legal'. Ignored when single_page is true."),
-    orientation: z
-      .enum(["portrait", "landscape"])
-      .optional()
-      .describe("Page orientation. Ignored when single_page is true."),
-    margins: z
-      .object({
-        top: z.number().optional(),
-        bottom: z.number().optional(),
-        left: z.number().optional(),
-        right: z.number().optional(),
-      })
-      .optional()
-      .describe("PDF margins in inches."),
-    scale: z.number().min(0.1).max(2).optional().describe("Page scale factor between 0.1 and 2.0."),
-    grayscale: z.boolean().optional().describe("Render the PDF in grayscale."),
-  })
-  .describe("Optional PDF rendering options.");
-
-const urlToPdfSchema = z.object({
-  url: z.string().url().describe("The full http(s) URL of the web page to convert."),
-  save_to: z
-    .string()
-    .optional()
-    .describe(
-      "Optional absolute local path to also save the PDF. If omitted, only the presigned download URL is returned.",
-    ),
-  single_page: z
-    .boolean()
-    .optional()
-    .describe(
-      "Render the whole page as one continuous (un-paginated) PDF page. Default: true. Set false to get a standard multi-page paginated PDF.",
-    ),
-  viewport_width: z
-    .number()
-    .int()
-    .min(320)
-    .max(3840)
-    .optional()
-    .describe("Browser viewport width in pixels. Default: 1920."),
-  viewport_height: z
-    .number()
-    .int()
-    .min(320)
-    .max(3840)
-    .optional()
-    .describe("Browser viewport height in pixels. Default: 1080."),
-  load_media: z
-    .boolean()
-    .optional()
-    .describe("Wait for images and videos to load before capture. Default: true."),
-  enable_scroll: z
-    .boolean()
-    .optional()
-    .describe("Scroll the page to trigger lazy-loaded content before capture. Default: true."),
-  pdf_options: pdfOptionsSchema.optional(),
-  output_filename: z
-    .string()
-    .optional()
-    .describe("Desired output filename (without extension)."),
-});
-
-const urlToScreenshotSchema = z.object({
-  url: z.string().url().describe("The full http(s) URL of the web page to capture."),
-  save_to: z
-    .string()
-    .optional()
-    .describe("Optional absolute local path to also save the PNG file."),
-  viewport_width: z
-    .number()
-    .int()
-    .min(320)
-    .max(3840)
-    .optional()
-    .describe("Browser viewport width in pixels. Default: 1920."),
-  viewport_height: z
-    .number()
-    .int()
-    .min(320)
-    .max(3840)
-    .optional()
-    .describe("Browser viewport height in pixels. Default: 1080."),
-  load_media: z
-    .boolean()
-    .optional()
-    .describe("Wait for images and videos to load before capture. Default: true."),
-  enable_scroll: z
-    .boolean()
-    .optional()
-    .describe("Scroll the page to trigger lazy-loaded content before capture. Default: true."),
-  output_filename: z
-    .string()
-    .optional()
-    .describe("Desired output filename (without extension)."),
-});
-
-const urlToMarkdownSchema = z.object({
-  url: z.string().url().describe("The full http(s) URL of the article or web page to convert."),
-  save_to: z
-    .string()
-    .optional()
-    .describe("Optional absolute local path to also save the .md file."),
-  viewport_width: z.number().int().min(320).max(3840).optional().describe("Viewport width. Default: 1920."),
-  viewport_height: z
-    .number()
-    .int()
-    .min(320)
-    .max(3840)
-    .optional()
-    .describe("Viewport height. Default: 1080."),
-  load_media: z.boolean().optional().describe("Wait for media to load. Default: true."),
-  enable_scroll: z
-    .boolean()
-    .optional()
-    .describe("Scroll to trigger lazy content. Default: true."),
-  output_filename: z.string().optional().describe("Desired output filename (without extension)."),
-});
 
 const convertDocumentSchema = z.object({
   file: z
@@ -198,11 +81,11 @@ const convertImageSchema = z.object({
   file: z
     .string()
     .describe(
-      "Absolute local filesystem path to the image, OR an http(s):// URL. Relative paths are rejected — always pass an absolute path.",
+      "Absolute local filesystem path to the image (or a .pdf to rasterize), OR an http(s):// URL. Relative paths are rejected — always pass an absolute path.",
     ),
   output_format: z
     .enum(["jpeg", "png", "svg", "heic", "webp"])
-    .describe("Target image format."),
+    .describe("Target image format. PDF input supports 'jpeg' only."),
   save_to: z
     .string()
     .optional()
@@ -211,6 +94,12 @@ const convertImageSchema = z.object({
     .string()
     .optional()
     .describe("Desired output filename (without extension)."),
+});
+
+const jobStatusSchema = z.object({
+  job_id: z
+    .string()
+    .describe("Job ID (jobId) returned by a previous conversion call."),
 });
 
 // --------------------------------------------------------------------------
@@ -237,25 +126,14 @@ async function resolveFileInput(input: string): Promise<FileInput> {
   return input;
 }
 
-function toPdfOptions(raw?: z.infer<typeof pdfOptionsSchema>): PdfOptions | undefined {
-  if (!raw) return undefined;
-  const out: PdfOptions = {};
-  if (raw.page_size !== undefined) out.pageSize = raw.page_size;
-  if (raw.orientation !== undefined) out.orientation = raw.orientation;
-  if (raw.margins !== undefined) out.margins = raw.margins;
-  if (raw.scale !== undefined) out.scale = raw.scale;
-  if (raw.grayscale !== undefined) out.grayscale = raw.grayscale;
-  return out;
-}
-
 interface StructuredPayload {
   presignedUrl: string;
   objectKey: string;
   filename: string;
   fileSize?: number;
   conversionTimeSeconds?: number;
+  jobId?: string;
   savedTo?: string;
-  markdown?: string;
 }
 
 function buildStructured(result: ConversionResult, savedTo?: string): StructuredPayload {
@@ -268,6 +146,7 @@ function buildStructured(result: ConversionResult, savedTo?: string): Structured
   if (result.conversionTimeSeconds !== undefined) {
     payload.conversionTimeSeconds = result.conversionTimeSeconds;
   }
+  if (result.jobId) payload.jobId = result.jobId;
   if (savedTo) payload.savedTo = savedTo;
   return payload;
 }
@@ -282,22 +161,30 @@ function summaryText(kind: string, result: ConversionResult, savedTo?: string): 
   if (result.conversionTimeSeconds !== undefined) {
     parts.push(`Conversion time: ${result.conversionTimeSeconds.toFixed(2)}s`);
   }
+  if (result.jobId) parts.push(`Job ID: ${result.jobId}`);
   if (savedTo) parts.push(`Saved locally to: ${savedTo}`);
   return parts.join("\n");
 }
 
-type ContentBlock = CallToolResult["content"][number];
+function jobStatusResult(jobId: string, status: JobStatus): CallToolResult {
+  const parts = [`Job ${jobId}: ${status.status}.`];
+  if (status.presignedUrl) parts.push(`Download URL: ${status.presignedUrl}`);
+  if (status.error) parts.push(`Error: ${status.error}`);
+  if (status.status === "processing") parts.push("Still processing — poll again shortly.");
+  return {
+    content: [{ type: "text", text: parts.join("\n") }],
+    structuredContent: { ...status } as unknown as Record<string, unknown>,
+  };
+}
 
 function okResult(
   kind: string,
   result: ConversionResult,
   savedTo: string | undefined,
   mimeType: string,
-  extraContent: ContentBlock[] = [],
 ): CallToolResult {
   const content: ContentBlock[] = [
     { type: "text", text: summaryText(kind, result, savedTo) },
-    ...extraContent,
   ];
   if (savedTo) {
     content.push({
@@ -312,39 +199,6 @@ function okResult(
   return { content, structuredContent: structured };
 }
 
-function errorResult(e: unknown): CallToolResult {
-  if (e instanceof AuthenticationError) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text",
-          text: `Authentication failed: ${e.message}\n\nSet ENCONVERT_API_KEY to a valid key. Get one at https://enconvert.com/dashboard/api-keys.`,
-        },
-      ],
-    };
-  }
-  if (e instanceof RateLimitError) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text",
-          text: `Rate limit reached: ${e.message}\n\nWait a moment and retry, or upgrade your Enconvert plan.`,
-        },
-      ],
-    };
-  }
-  if (e instanceof APIError) {
-    return {
-      isError: true,
-      content: [{ type: "text", text: `Enconvert API error (${e.statusCode}): ${e.message}` }],
-    };
-  }
-  const msg = e instanceof Error ? e.message : String(e);
-  return { isError: true, content: [{ type: "text", text: `Conversion failed: ${msg}` }] };
-}
-
 // --------------------------------------------------------------------------
 // createServer
 // --------------------------------------------------------------------------
@@ -356,101 +210,6 @@ export function createServer(env: Env): McpServer {
     name: "enconvert",
     version: SERVER_VERSION,
   });
-
-  // -- convert_url_to_pdf --
-  server.registerTool(
-    "convert_url_to_pdf",
-    {
-      title: URL_TO_PDF_TITLE,
-      description: URL_TO_PDF_DESCRIPTION,
-      inputSchema: urlToPdfSchema.shape,
-    },
-    async (input) => {
-      try {
-        const result = await client.convertUrlToPdf(input.url, {
-          saveTo: input.save_to,
-          singlePage: input.single_page,
-          viewportWidth: input.viewport_width,
-          viewportHeight: input.viewport_height,
-          loadMedia: input.load_media,
-          enableScroll: input.enable_scroll,
-          pdfOptions: toPdfOptions(input.pdf_options),
-          outputFilename: input.output_filename,
-        });
-        return okResult("PDF", result, input.save_to, "application/pdf");
-      } catch (e) {
-        return errorResult(e);
-      }
-    },
-  );
-
-  // -- convert_url_to_screenshot --
-  server.registerTool(
-    "convert_url_to_screenshot",
-    {
-      title: URL_TO_SCREENSHOT_TITLE,
-      description: URL_TO_SCREENSHOT_DESCRIPTION,
-      inputSchema: urlToScreenshotSchema.shape,
-    },
-    async (input) => {
-      try {
-        const result = await client.convertUrlToScreenshot(input.url, {
-          saveTo: input.save_to,
-          viewportWidth: input.viewport_width,
-          viewportHeight: input.viewport_height,
-          loadMedia: input.load_media,
-          enableScroll: input.enable_scroll,
-          outputFilename: input.output_filename,
-        });
-        return okResult("Screenshot", result, input.save_to, "image/png");
-      } catch (e) {
-        return errorResult(e);
-      }
-    },
-  );
-
-  // -- convert_url_to_markdown --
-  server.registerTool(
-    "convert_url_to_markdown",
-    {
-      title: URL_TO_MARKDOWN_TITLE,
-      description: URL_TO_MARKDOWN_DESCRIPTION,
-      inputSchema: urlToMarkdownSchema.shape,
-    },
-    async (input) => {
-      try {
-        const result = await client.convertUrlToMarkdown(input.url, {
-          saveTo: input.save_to,
-          viewportWidth: input.viewport_width,
-          viewportHeight: input.viewport_height,
-          loadMedia: input.load_media,
-          enableScroll: input.enable_scroll,
-          outputFilename: input.output_filename,
-        });
-
-        // Inline the markdown body when it's under the size cap.
-        const extras: ContentBlock[] = [];
-        try {
-          const resp = await fetch(result.presignedUrl);
-          if (resp.ok) {
-            const buf = new Uint8Array(await resp.arrayBuffer());
-            if (buf.byteLength <= INLINE_MARKDOWN_MAX_BYTES) {
-              const md = new TextDecoder("utf-8").decode(buf);
-              extras.push({
-                type: "text",
-                text: `--- Extracted Markdown ---\n${md}`,
-              });
-            }
-          }
-        } catch {
-          // Non-fatal: inline fetch is a best-effort convenience.
-        }
-        return okResult("Markdown", result, input.save_to, "text/markdown", extras);
-      } catch (e) {
-        return errorResult(e);
-      }
-    },
-  );
 
   // -- convert_document --
   server.registerTool(
@@ -500,6 +259,32 @@ export function createServer(env: Env): McpServer {
       }
     },
   );
+
+  // -- get_job_status --
+  server.registerTool(
+    "get_job_status",
+    {
+      title: JOB_STATUS_TITLE,
+      description: JOB_STATUS_DESCRIPTION,
+      inputSchema: jobStatusSchema.shape,
+    },
+    async (input) => {
+      try {
+        const status = await client.getJobStatus(input.job_id);
+        return jobStatusResult(input.job_id, status);
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  // V2 tools (perceive / discover / search / distill / ingest / watch).
+  registerV2Tools(server, client);
+
+  // Instrument LAST: the SDK lazily installs its own CallToolRequestSchema
+  // handler on the first registerTool() call above, so patching before that
+  // would be overwritten rather than wrapped.
+  instrumentServer(server, env, SERVER_VERSION);
 
   return server;
 }
