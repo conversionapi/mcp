@@ -25,11 +25,13 @@
 #        (Settings → Secrets and variables → Actions → New repository secret).
 #
 # ── Version pins ─────────────────────────────────────────────────────────────
-#   npm Trusted Publishing requires npm >= 11.5.1 and Node >= 22.14.0. Node 22
-#   ships npm 10.x, so we upgrade npm before publishing. The package still
-#   targets its engines.node range for CONSUMERS — only the publish RUNNER needs
-#   Node 22. Provenance requires a cloud runner (ubuntu-latest); self-hosted is
-#   unsupported.
+#   npm Trusted Publishing requires npm >= 11.5.1. Node 24 already BUNDLES
+#   npm 11.6+, so we use Node 24 and do NOT self-upgrade npm. (Running
+#   `npm install -g npm@latest` in place corrupts the bundled `sigstore`
+#   module and breaks `npm publish --provenance` with "Cannot find module
+#   'sigstore'".) The package still targets its engines.node range for
+#   CONSUMERS — only the publish RUNNER needs Node 24. Provenance requires a
+#   cloud runner (ubuntu-latest); self-hosted is unsupported.
 #
 # Consider pinning the third-party actions below to full commit SHAs for
 # supply-chain hardening once you're happy with the flow.
@@ -55,11 +57,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"                          # >= 22.14.0 for trusted publishing
+          node-version: "24"                          # bundles npm 11.6+ (>= 11.5.1 for trusted publishing)
           registry-url: "https://registry.npmjs.org"  # writes ~/.npmrc so publish targets npm
-
-      - name: Upgrade npm (trusted publishing needs >= 11.5.1; Node 22 ships npm 10.x)
-        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
