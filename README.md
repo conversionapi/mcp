@@ -1,5 +1,7 @@
 # @enconvert/mcp
 
+[![MCP Badge](https://lobehub.com/badge/mcp/conversionapi-mcp?style=plastic)](https://lobehub.com/mcp/conversionapi-mcp)
+
 Official **Model Context Protocol (MCP) server** for [Enconvert](https://enconvert.com) — lets any MCP-compatible AI agent (Claude Code, Cursor, Windsurf, Claude Desktop, Continue, etc.) convert files and URLs through a single command.
 
 ## What you get
